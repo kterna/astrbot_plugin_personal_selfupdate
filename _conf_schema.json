@@ -1,0 +1,14 @@
+{
+    "provider": {
+        "type": "string",
+        "description": "服务提供商",
+        "hint": "空则为默认服务提供商",
+        "default": ""
+    },
+    "model": {
+        "type": "string",
+        "description": "模型",
+        "hint": "请设置为能力较强的模型以得到较好效果",
+        "default": ""
+    }
+}
