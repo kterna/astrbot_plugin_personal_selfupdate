@@ -3,6 +3,7 @@ from astrbot.api.event import filter, AstrMessageEvent, MessageEventResult
 from typing import Optional
 from astrbot.api.provider import LLMResponse
 from astrbot.api import AstrBotConfig, logger, ToolSet
+import json
 from .core.tools import GetPersonaDetailTool, UpdatePersonaDetailsTool
 from .core.textbuild import (
     build_persona_detail_text,
@@ -17,102 +18,14 @@ from .core.textbuild import (
     "https://github.com/kterna/astrbot_plugin_personal_selfupdate"
 )
 class Main(Star):
-    def __init__(self, context: Context) -> None:
+    def __init__(self, context: Context, config: AstrBotConfig) -> None:
         """
         插件初始化
         """
         super().__init__(context)
-        self.config = self.context.get_config()
+        self.config = config
 
-    async def _get_persona_detail(self, event: AstrMessageEvent, persona_id: str) -> MessageEventResult:
-        """
-        获取指定ID的人格的详细信息。
-
-        :param persona_id: 要查询的人格的ID。
-        """
-        try:
-            persona = await self.context.persona_manager.get_persona(persona_id)
-            return event.plain_result(build_persona_detail_text(persona_id, persona))
-        except ValueError as e:
-            return event.plain_result(f"错误：{e}")
-        except Exception as e:
-            return event.plain_result(f"查询人格详情时出错: {e}")
-
-    @filter.command("人格详情", "persona detail")
-    async def persona_detail(self, event: AstrMessageEvent):
-        """
-        获取指定ID的人格的详细信息。
-        用法: /人格详情 [人格ID]
-        """
-        args = event.message_str.split()
-        if len(args) < 2:
-            yield event.plain_result("参数不足，请提供人格ID。用法: /人格详情 [人格ID]")
-            return
-
-        persona_id = args[1]
-        result = await self._get_persona_detail(event, persona_id)
-        yield result
-
-    @filter.command("人格列表", "persona list")
-    async def persona_list(self, event: AstrMessageEvent):
-        """
-        查看数据库中所有的人格数据
-        """
-        try:
-            # 1. 从上下文中获取 PersonaManager
-            persona_manager = self.context.persona_manager
-
-            # 2. 获取所有人格数据
-            # get_all_personas_v3 返回的是配置中的人格，get_all_personas 返回的是数据库中的
-            personas = await persona_manager.get_all_personas()
-            if not personas:
-                yield event.plain_result("数据库中没有任何人格设定")
-                return
-            response_text = build_persona_list_text(personas)
-            yield event.plain_result(response_text)
-        except Exception as e:
-            yield event.plain_result(f"获取人格列表失败: {e}")
-
-    async def _update_persona(
-        self,
-        persona_id: str,
-        system_prompt: Optional[str] = None,
-        begin_dialogs: Optional[list] = None,
-        tools: Optional[list] = None,
-    ):
-        """
-        内部方法：根据 persona_id 更新人格数据。
-        对于值为 None 的参数，将不会进行修改。
-
-        :param persona_id: 要更新的人格ID
-        :param system_prompt: 新的系统提示
-        :param begin_dialogs: 新的开场白列表
-        :param tools: 新的工具列表
-        """
-        try:
-            persona_manager = self.context.persona_manager
-            
-            # 构造需要更新的数据
-            update_data = {}
-            if system_prompt is not None:
-                update_data["system_prompt"] = system_prompt
-            if begin_dialogs is not None:
-                update_data["begin_dialogs"] = begin_dialogs
-            if tools is not None:
-                update_data["tools"] = tools
-
-            # 如果没有提供任何更新，则直接返回
-            if not update_data:
-                return True, f"未提供任何需要更新的字段，人格 '{persona_id}' 未作修改。"
-
-            # 调用 PersonaManager 来更新数据，它会处理数据库和缓存
-            # update_persona 内部会检查人格是否存在
-            await persona_manager.update_persona(persona_id, **update_data)
-            
-            return True, f"成功更新人格 '{persona_id}'。"
-        except Exception as e:
-            return False, f"更新人格 '{persona_id}' 失败: {e}"
-
+    @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("人格更新", "persona update")
     async def persona_self_update(self, event: AstrMessageEvent):
         """
@@ -135,41 +48,34 @@ class Main(Star):
             UpdatePersonaDetailsTool(main_plugin=self, event=event),
         ])
         
-        logger.info(f"创建 ToolSet，包含工具: {tool_set.names()}")
-        logger.info(f"ToolSet 长度: {len(tool_set)}")
-        for tool in tool_set:
-            logger.info(f"工具详情: {tool.name} - {tool.description} - Handler: {tool.handler is not None}")
+        logger.info(f"创建 ToolSet，包含 {len(tool_set)} 个工具")
 
         # 2. 获取 Provider
-        provider_config = self.config.get("provider")
-        model_name = self.config.get("model")
+        provider = self.config.get("provider", "")
+        model_name = self.config.get("model", "")
         
-        # 处理配置值可能是列表的情况
-        if isinstance(provider_config, list):
-            provider_config = provider_config[0] if provider_config else None
-        if isinstance(model_name, list):
-            model_name = model_name[0] if model_name else None
-            
-        # 从 provider 配置中提取 ID
-        provider_id = None
-        if provider_config:
-            if isinstance(provider_config, dict):
-                provider_id = provider_config.get("id")
-            elif isinstance(provider_config, str) and provider_config != "":
-                provider_id = provider_config
+        logger.info(f"插件配置原始值 - Provider: '{provider}' Model: '{model_name}'")
         
-        # 确保 model_name 为字符串或None
+        # 处理 model 配置
         model_name = str(model_name) if model_name and model_name != "" else None
         
-        logger.info(f"插件配置 - Provider ID: '{provider_id or '默认'}' Model: '{model_name or '默认'}'")
+        logger.info(f"插件配置 - Provider ID: '{provider or '默认'}' Model: '{model_name}'")
 
         try:
-            if provider_id:
-                provider = self.context.get_provider_by_id(provider_id=provider_id)
+            if provider:
+                # 如果指定了 provider ID，尝试获取该 provider
+                provider = self.context.get_provider_by_id(provider_id=provider)
+                if not provider:
+                    logger.warning(f"指定的 Provider '{provider}' 不存在或未启用，使用默认 provider")
+                    provider = self.context.get_using_provider(umo=event.unified_msg_origin)
             else:
+                # 没有指定，使用默认
                 provider = self.context.get_using_provider(umo=event.unified_msg_origin)
+                
             if not provider:
-                raise ValueError("无法获取有效的服务提供商。")
+                raise ValueError("无法获取有效的服务提供商。请检查是否有启用的 Provider。")
+                
+            logger.info(f"使用的 Provider: {provider}")
         except Exception as e:
             logger.error(f"获取服务提供商失败: {e}", exc_info=True)
             yield event.plain_result(f"获取服务提供商失败: {e}")
@@ -177,44 +83,137 @@ class Main(Star):
 
         # 3. 构建 System Prompt，让 LLM 自行决定如何使用工具
         system_prompt = f"""你是人格配置专家，负责根据用户要求更新 AI 人格设定。
-
 可用工具：
-- get_persona_detail(persona_id): 获取人格当前设定
-- update_persona_details(persona_id, system_prompt?, begin_dialogs?, tools?): 更新人格设定
+- get_persona_detail(persona_id): 获取人格当前设定 - 必须先调用
+- update_persona_details(persona_id, system_prompt?, begin_dialogs?, tools?): 更新人格设定,begin_dialogs为偶数个字符串，每个字符串代表一个对话，用户和助手轮流对话
 
 任务：更新人格 '{persona_id}'，要求：{update_requirement}
 
-步骤：1. 先获取当前设定 2. 根据要求修改 3. 应用更新 4. 简洁总结修改内容"""
+重要：你必须严格按以下步骤执行：
+1. 调用 get_persona_detail 获取当前人格信息
+2. 根据要求分析需要修改的内容  
+3. 调用 update_persona_details 应用修改
+4. 简洁总结修改内容
+
+请立即开始执行，先调用 get_persona_detail 工具。"""
         user_prompt = "开始执行。"
         
         logger.info("开始调用 LLM Agent 进行人格更新")
         yield event.plain_result("🔄 分析中...")
 
         try:
-            logger.info("调用 LLM Agent，让其自主使用工具...")
-            logger.info(f"传递给 provider.text_chat 的工具类型: {type(tool_set)}")
-            logger.info(f"工具 openai_schema: {tool_set.openai_schema()}")
+            logger.info("开始 LLM Agent 工具调用...")
             
-            # 单次调用，框架会自动处理工具调用循环
-            response: LLMResponse = await provider.text_chat(
-                prompt=user_prompt,
-                system_prompt=system_prompt,
-                model=model_name or None,
-                func_tool=tool_set,
-                session_id=None,  # 不使用会话
-                contexts=[],      # 不使用上下文
-                image_urls=[]     # 不使用图片
-            )
+            # 实现工具调用循环
+            max_iterations = 10
+            
+            # -- 重构 Agent 循环 (V4) --
+            messages = []
+            current_prompt = user_prompt
 
-            logger.info(f"LLM 响应对象: {response}")
-            logger.info(f"LLM 响应角色: {getattr(response, 'role', 'None')}")
-            logger.info(f"LLM 响应内容长度: {len(getattr(response, 'completion_text', ''))}")
-            logger.info(f"LLM 是否有工具调用: {hasattr(response, 'tool_calls')}")
-            if hasattr(response, 'tool_calls'):
-                logger.info(f"工具调用内容: {getattr(response, 'tool_calls', 'None')}")
+            for _ in range(max_iterations):
 
-            final_text = response.completion_text if response else "响应为空"
-            logger.info(f"LLM Agent 执行完成，总结: {final_text[:100]}...")
+                response: LLMResponse = await provider.text_chat(
+                    prompt=current_prompt,
+                    system_prompt=system_prompt,
+                    model=model_name or None,
+                    func_tool=tool_set,
+                    session_id=None,
+                    contexts=messages, # History before this turn's prompt
+                    image_urls=[]
+                )
+                
+                # Add the prompt for the current turn to the history
+                messages.append({"role": "user", "content": current_prompt})
+                
+                # 检查是否有工具调用
+                if (hasattr(response, 'tools_call_name') and 
+                    hasattr(response, 'tools_call_args') and 
+                    response.tools_call_name and 
+                    response.tools_call_args):
+                    
+                    # 执行所有工具调用
+                    tool_results = []
+                    tool_call_ids = getattr(response, 'tools_call_ids', [f"{name}:{i}" for i, name in enumerate(response.tools_call_name)])
+                    
+                    for tool_name, tool_args, tool_id in zip(
+                        response.tools_call_name, 
+                        response.tools_call_args,
+                        tool_call_ids
+                    ):
+                        # 获取工具并执行
+                        tool = tool_set.get_tool(tool_name)
+                        if tool and tool.handler:
+                            try:
+                                result = await tool.handler(**tool_args)
+                                tool_results.append({
+                                    "tool_call_id": tool_id,
+                                    "role": "tool",
+                                    "content": str(result)
+                                })
+                            except Exception as e:
+                                logger.error(f"工具 {tool_name} 执行失败: {e}")
+                                tool_results.append({
+                                    "tool_call_id": tool_id,
+                                    "role": "tool", 
+                                    "content": f"工具执行失败: {e}"
+                                })
+                        else:
+                            logger.error(f"未找到工具: {tool_name}")
+                            tool_results.append({
+                                "tool_call_id": tool_id,
+                                "role": "tool",
+                                "content": f"未找到工具: {tool_name}"
+                            })
+                    
+                    # 助理回复
+                    assistant_content = "调用工具"
+                    if response.result_chain and response.result_chain.chain:
+                        text = response.result_chain.chain[0].text
+                        if text and text.strip():
+                            assistant_content = text
+                    
+                    # 将助理的回复（包含工具调用）添加到历史
+                    messages.append({
+                        "role": "assistant",
+                        "content": assistant_content,
+                        "tool_calls": [
+                            {
+                                "id": tool_id,
+                                "type": "function",
+                                "function": {
+                                    "name": tool_name,
+                                    "arguments": json.dumps(tool_args) if isinstance(tool_args, dict) else str(tool_args)
+                                }
+                            }
+                            for tool_name, tool_args, tool_id in zip(
+                                response.tools_call_name,
+                                response.tools_call_args, 
+                                tool_call_ids
+                            )
+                        ]
+                    })
+                    
+                    # 添加工具结果
+                    messages.extend(tool_results)
+                    
+                    # 为下一轮准备：prompt 是一个占位符，以避免空消息错误
+                    current_prompt = " "
+                    
+                    continue
+                
+                else:
+                    # 没有工具调用，完成
+                    final_text = response.completion_text if hasattr(response, 'completion_text') else ""
+                    if response.result_chain and response.result_chain.chain:
+                        final_text = response.result_chain.chain[0].text
+                    
+                    break
+            
+            else:
+                # 达到最大迭代次数
+                final_text = "工具调用超过最大次数限制"
+                logger.warning("工具调用循环达到最大次数限制")
             
             # 精简返回文本
             if "总结" in final_text:

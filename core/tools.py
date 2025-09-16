@@ -91,28 +91,28 @@ class UpdatePersonaDetailsTool(FunctionTool):
         
         logger.info(f"[Tool] UpdatePersonaDetailsTool: 更新人格 '{persona_id}' - system_prompt: {bool(system_prompt)}, begin_dialogs: {bool(begin_dialogs)}, tools: {bool(tools)}")
         
-        success, message = await self.main_plugin._update_persona(
-            persona_id=persona_id,
-            system_prompt=system_prompt,
-            begin_dialogs=begin_dialogs,
-            tools=tools,
-        )
-        
-        if success:
+        try:
+            persona = await self.main_plugin.context.persona_manager.update_persona(
+                persona_id,
+                system_prompt=system_prompt,
+                begin_dialogs=begin_dialogs,
+                tools=tools,
+            )
             logger.info(f"[Tool] UpdatePersonaDetailsTool: 成功更新人格 '{persona_id}'")
-            try:
-                persona = await self.main_plugin.context.persona_manager.get_persona(persona_id)
-                result = {
-                    "persona_id": persona_id,
-                    "system_prompt": getattr(persona, "system_prompt", ""),
-                    "begin_dialogs": getattr(persona, "begin_dialogs", []),
-                    "tools": getattr(persona, "tools", None)
-                }
-                logger.info(f"[Tool] UpdatePersonaDetailsTool: 返回更新后的人格信息")
-                return json.dumps(result, ensure_ascii=False)
-            except Exception as e:
-                logger.error(f"[Tool] UpdatePersonaDetailsTool: 获取更新后信息失败: {e}")
-                return f"更新成功但获取更新后信息失败：{e}"
-        else:
-            logger.error(f"[Tool] UpdatePersonaDetailsTool: 更新人格 '{persona_id}' 失败: {message}")
-            return message
+        except Exception as e:
+            logger.error(f"[Tool] UpdatePersonaDetailsTool: 更新人格 '{persona_id}' 失败: {e}")
+            return f"更新失败：{e}"
+
+        try:
+            persona = persona or await self.main_plugin.context.persona_manager.get_persona(persona_id)
+            result = {
+                "persona_id": persona_id,
+                "system_prompt": getattr(persona, "system_prompt", ""),
+                "begin_dialogs": getattr(persona, "begin_dialogs", []),
+                "tools": getattr(persona, "tools", None)
+            }
+            logger.info(f"[Tool] UpdatePersonaDetailsTool: 返回更新后的人格信息")
+            return json.dumps(result, ensure_ascii=False)
+        except Exception as e:
+            logger.error(f"[Tool] UpdatePersonaDetailsTool: 获取更新后信息失败: {e}")
+            return f"更新成功但获取更新后信息失败：{e}"
