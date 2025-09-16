@@ -1,14 +1,11 @@
 from astrbot.api.star import Star, Context, register
 from astrbot.api.event import filter, AstrMessageEvent, MessageEventResult
-from typing import Optional
 from astrbot.api.provider import LLMResponse
 from astrbot.api import AstrBotConfig, logger, ToolSet
-import json
+
 from .core.tools import GetPersonaDetailTool, UpdatePersonaDetailsTool
-from .core.textbuild import (
-    build_persona_detail_text,
-    build_persona_list_text,
-)
+
+import json
 
 @register(
     "personal_selfupdate",
@@ -47,19 +44,13 @@ class Main(Star):
             GetPersonaDetailTool(main_plugin=self, event=event),
             UpdatePersonaDetailsTool(main_plugin=self, event=event),
         ])
-        
-        logger.info(f"创建 ToolSet，包含 {len(tool_set)} 个工具")
 
         # 2. 获取 Provider
         provider = self.config.get("provider", "")
         model_name = self.config.get("model", "")
         
-        logger.info(f"插件配置原始值 - Provider: '{provider}' Model: '{model_name}'")
-        
         # 处理 model 配置
         model_name = str(model_name) if model_name and model_name != "" else None
-        
-        logger.info(f"插件配置 - Provider ID: '{provider or '默认'}' Model: '{model_name}'")
 
         try:
             if provider:
@@ -75,7 +66,6 @@ class Main(Star):
             if not provider:
                 raise ValueError("无法获取有效的服务提供商。请检查是否有启用的 Provider。")
                 
-            logger.info(f"使用的 Provider: {provider}")
         except Exception as e:
             logger.error(f"获取服务提供商失败: {e}", exc_info=True)
             yield event.plain_result(f"获取服务提供商失败: {e}")
@@ -95,6 +85,10 @@ class Main(Star):
 3. 调用 update_persona_details 应用修改
 4. 简洁总结修改内容
 
+请严格按照上述流程执行。特别注意：
+- begin_dialogs 必须包含偶数条对话，且需按照“用户、助手”轮流排列。
+- 只有在完成分析并确定改动后，才调用一次 update_persona_details 应用修改。
+
 请立即开始执行，先调用 get_persona_detail 工具。"""
         user_prompt = "开始执行。"
         
@@ -104,10 +98,8 @@ class Main(Star):
         try:
             logger.info("开始 LLM Agent 工具调用...")
             
-            # 实现工具调用循环
             max_iterations = 10
             
-            # -- 重构 Agent 循环 (V4) --
             messages = []
             current_prompt = user_prompt
 
@@ -119,11 +111,10 @@ class Main(Star):
                     model=model_name or None,
                     func_tool=tool_set,
                     session_id=None,
-                    contexts=messages, # History before this turn's prompt
+                    contexts=messages,
                     image_urls=[]
                 )
                 
-                # Add the prompt for the current turn to the history
                 messages.append({"role": "user", "content": current_prompt})
                 
                 # 检查是否有工具调用
