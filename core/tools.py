@@ -35,6 +35,8 @@ class GetPersonaDetailTool(FunctionTool):
         logger.info(f"[Tool] GetPersonaDetailTool: 查询人格 '{persona_id}' 的详细信息")
         try:
             persona = await self.main_plugin.context.persona_manager.get_persona(persona_id)
+            if not persona:
+                raise ValueError("未找到指定人格")
             logger.info(f"[Tool] GetPersonaDetailTool: 成功获取人格 '{persona_id}' 信息")
             result = {
                 "persona_id": persona_id,
@@ -42,10 +44,10 @@ class GetPersonaDetailTool(FunctionTool):
                 "begin_dialogs": getattr(persona, "begin_dialogs", []),
                 "tools": getattr(persona, "tools", None)
             }
-            return json.dumps(result, ensure_ascii=False)
+            return json.dumps({"ok": True, "persona": result}, ensure_ascii=False)
         except Exception as e:
             logger.error(f"[Tool] GetPersonaDetailTool: 获取人格 '{persona_id}' 失败: {e}")
-            return f"错误：{e}"
+            return json.dumps({"ok": False, "error": str(e), "persona_id": persona_id}, ensure_ascii=False)
 
 class UpdatePersonaDetailsTool(FunctionTool):
     def __init__(self, main_plugin: "Main", event: "AstrMessageEvent"):
@@ -88,9 +90,20 @@ class UpdatePersonaDetailsTool(FunctionTool):
         system_prompt = kwargs.get('system_prompt')
         begin_dialogs = kwargs.get('begin_dialogs')
         tools = kwargs.get('tools')
-        
+
         logger.info(f"[Tool] UpdatePersonaDetailsTool: 更新人格 '{persona_id}' - system_prompt: {bool(system_prompt)}, begin_dialogs: {bool(begin_dialogs)}, tools: {bool(tools)}")
-        
+
+        if begin_dialogs is not None:
+            if not isinstance(begin_dialogs, list) or any(not isinstance(item, str) for item in begin_dialogs):
+                error_msg = "begin_dialogs 必须是字符串列表"
+                logger.warning(f"[Tool] UpdatePersonaDetailsTool: {error_msg}")
+                return json.dumps({"ok": False, "error": error_msg}, ensure_ascii=False)
+
+            if len(begin_dialogs) % 2 != 0:
+                error_msg = "begin_dialogs 条目数量必须为偶数，且应按用户/助手顺序排列"
+                logger.warning(f"[Tool] UpdatePersonaDetailsTool: {error_msg}")
+                return json.dumps({"ok": False, "error": error_msg}, ensure_ascii=False)
+
         try:
             persona = await self.main_plugin.context.persona_manager.update_persona(
                 persona_id,
@@ -101,10 +114,12 @@ class UpdatePersonaDetailsTool(FunctionTool):
             logger.info(f"[Tool] UpdatePersonaDetailsTool: 成功更新人格 '{persona_id}'")
         except Exception as e:
             logger.error(f"[Tool] UpdatePersonaDetailsTool: 更新人格 '{persona_id}' 失败: {e}")
-            return f"更新失败：{e}"
+            return json.dumps({"ok": False, "error": f"更新失败：{e}"}, ensure_ascii=False)
 
         try:
             persona = persona or await self.main_plugin.context.persona_manager.get_persona(persona_id)
+            if not persona:
+                raise ValueError("更新后无法获取人格详情")
             result = {
                 "persona_id": persona_id,
                 "system_prompt": getattr(persona, "system_prompt", ""),
@@ -112,7 +127,7 @@ class UpdatePersonaDetailsTool(FunctionTool):
                 "tools": getattr(persona, "tools", None)
             }
             logger.info(f"[Tool] UpdatePersonaDetailsTool: 返回更新后的人格信息")
-            return json.dumps(result, ensure_ascii=False)
+            return json.dumps({"ok": True, "persona": result}, ensure_ascii=False)
         except Exception as e:
             logger.error(f"[Tool] UpdatePersonaDetailsTool: 获取更新后信息失败: {e}")
-            return f"更新成功但获取更新后信息失败：{e}"
+            return json.dumps({"ok": False, "error": f"更新成功但获取更新后信息失败：{e}"}, ensure_ascii=False)

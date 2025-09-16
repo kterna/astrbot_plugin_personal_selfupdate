@@ -30,13 +30,24 @@ class Main(Star):
         用法: /人格更新 [人格ID] [更新要求]
         例如: /人格更新 伯特 让他说话更专业一些
         """
-        args = event.message_str.split(" ")
-        if len(args) < 3:
+        raw_message = event.message_str.strip()
+        parts = raw_message.split(None, 2) if raw_message else []
+
+        if len(parts) < 3:
             yield event.plain_result("参数不足，请提供人格ID和更新要求。")
             return
 
-        persona_id = args[1]
-        update_requirement = " ".join(args[2:])
+        _, persona_id, update_requirement = parts
+        persona_id = persona_id.strip()
+        update_requirement = update_requirement.strip()
+
+        if not persona_id:
+            yield event.plain_result("人格ID 不能为空，请重新输入。")
+            return
+
+        if not update_requirement:
+            yield event.plain_result("更新要求不能为空，请提供具体说明。")
+            return
         logger.info(f"收到人格更新命令. ID: '{persona_id}', 要求: '{update_requirement}'")
 
         # 1. 定义在此次会话中生效的工具
@@ -46,30 +57,34 @@ class Main(Star):
         ])
 
         # 2. 获取 Provider
-        provider = self.config.get("provider", "")
+        provider_id = str(self.config.get("provider", "") or "").strip()
         model_name = self.config.get("model", "")
-        
+
         # 处理 model 配置
         model_name = str(model_name) if model_name and model_name != "" else None
 
         try:
-            if provider:
+            provider_instance = None
+
+            if provider_id:
                 # 如果指定了 provider ID，尝试获取该 provider
-                provider = self.context.get_provider_by_id(provider_id=provider)
-                if not provider:
-                    logger.warning(f"指定的 Provider '{provider}' 不存在或未启用，使用默认 provider")
-                    provider = self.context.get_using_provider(umo=event.unified_msg_origin)
+                provider_instance = self.context.get_provider_by_id(provider_id=provider_id)
+                if not provider_instance:
+                    logger.warning(f"指定的 Provider '{provider_id}' 不存在或未启用，使用默认 provider")
+                    provider_instance = self.context.get_using_provider(umo=event.unified_msg_origin)
             else:
                 # 没有指定，使用默认
-                provider = self.context.get_using_provider(umo=event.unified_msg_origin)
-                
-            if not provider:
+                provider_instance = self.context.get_using_provider(umo=event.unified_msg_origin)
+
+            if not provider_instance:
                 raise ValueError("无法获取有效的服务提供商。请检查是否有启用的 Provider。")
-                
+
         except Exception as e:
             logger.error(f"获取服务提供商失败: {e}", exc_info=True)
             yield event.plain_result(f"获取服务提供商失败: {e}")
             return
+
+        provider = provider_instance
 
         # 3. 构建 System Prompt，让 LLM 自行决定如何使用工具
         system_prompt = f"""你是人格配置专家，负责根据用户要求更新 AI 人格设定。
