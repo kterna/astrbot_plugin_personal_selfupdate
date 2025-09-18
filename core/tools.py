@@ -33,6 +33,12 @@ class GetPersonaDetailTool(FunctionTool):
     async def _run_handler(self, **kwargs):
         persona_id = kwargs.get('persona_id')
         logger.info(f"[Tool] GetPersonaDetailTool: 查询人格 '{persona_id}' 的详细信息")
+
+        cached_persona = self.main_plugin.get_cached_persona_detail(persona_id)
+        if cached_persona is not None:
+            logger.info(f"[Tool] GetPersonaDetailTool: 使用缓存的人格 '{persona_id}' 信息")
+            return json.dumps({"ok": True, "persona": cached_persona}, ensure_ascii=False)
+
         try:
             persona = await self.main_plugin.context.persona_manager.get_persona(persona_id)
             if not persona:
@@ -44,6 +50,7 @@ class GetPersonaDetailTool(FunctionTool):
                 "begin_dialogs": getattr(persona, "begin_dialogs", []),
                 "tools": getattr(persona, "tools", None)
             }
+            self.main_plugin.cache_persona_detail(persona_id, result)
             return json.dumps({"ok": True, "persona": result}, ensure_ascii=False)
         except Exception as e:
             logger.error(f"[Tool] GetPersonaDetailTool: 获取人格 '{persona_id}' 失败: {e}")
@@ -127,6 +134,7 @@ class UpdatePersonaDetailsTool(FunctionTool):
                 "tools": getattr(persona, "tools", None)
             }
             logger.info(f"[Tool] UpdatePersonaDetailsTool: 返回更新后的人格信息")
+            self.main_plugin.cache_persona_detail(persona_id, result)
             return json.dumps({"ok": True, "persona": result}, ensure_ascii=False)
         except Exception as e:
             logger.error(f"[Tool] UpdatePersonaDetailsTool: 获取更新后信息失败: {e}")
